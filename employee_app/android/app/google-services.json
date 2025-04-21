@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "718786358148",
+    "project_id": "shift-bookk",
+    "storage_bucket": "shift-bookk.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:718786358148:android:f8c583be0f9bf7d45ccbd1",
+        "android_client_info": {
+          "package_name": "com.example.employee_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAYNdOX7-Pt-H21kOi0ADmbv0joYEhEXuM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

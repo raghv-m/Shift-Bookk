@@ -1,0 +1,129 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isManager() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager';
+    }
+    
+    function isEmployee() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'employee';
+    }
+    
+    function isStoreMember(storeId) {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.storeId == storeId;
+    }
+    
+    function isGroupMember(groupId) {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/groups/$(groupId)).data.members.hasAny([request.auth.uid]);
+    }
+
+    // Stores collection
+    match /stores/{storeId} {
+      allow read: if isStoreMember(storeId) || isAdmin();
+      allow write: if isAdmin() || (isManager() && isStoreMember(storeId));
+      
+      // Store settings
+      match /settings/{document=**} {
+        allow read: if isStoreMember(storeId);
+        allow write: if isAdmin() || (isManager() && isStoreMember(storeId));
+      }
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin();
+      allow update: if request.auth.uid == userId || isAdmin();
+      allow delete: if isAdmin();
+      
+      // User profile
+      match /profile/{document=**} {
+        allow read: if isAuthenticated();
+        allow write: if request.auth.uid == userId || isAdmin();
+      }
+      
+      // User availability
+      match /availability/{document=**} {
+        allow read: if isStoreMember(resource.data.storeId);
+        allow write: if request.auth.uid == userId;
+      }
+    }
+
+    // Shifts collection
+    match /shifts/{shiftId} {
+      allow read: if isStoreMember(resource.data.storeId);
+      allow create: if isAdmin() || (isManager() && isStoreMember(request.resource.data.storeId));
+      allow update: if isAdmin() || (isManager() && isStoreMember(resource.data.storeId));
+      allow delete: if isAdmin() || (isManager() && isStoreMember(resource.data.storeId));
+      
+      // Time logs
+      match /timeLogs/{document=**} {
+        allow read: if isStoreMember(resource.data.storeId);
+        allow create: if request.auth.uid == request.resource.data.userId;
+        allow update: if request.auth.uid == resource.data.userId || isManager();
+      }
+    }
+
+    // Groups collection (for social features)
+    match /groups/{groupId} {
+      allow read: if isGroupMember(groupId);
+      allow create: if isAuthenticated();
+      allow update: if isGroupMember(groupId) && 
+        (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow delete: if resource.data.ownerId == request.auth.uid || isAdmin();
+      
+      // Group posts
+      match /posts/{postId} {
+        allow read: if isGroupMember(groupId);
+        allow create: if isGroupMember(groupId);
+        allow update: if resource.data.authorId == request.auth.uid || isAdmin();
+        allow delete: if resource.data.authorId == request.auth.uid || isAdmin();
+        
+        // Post comments
+        match /comments/{commentId} {
+          allow read: if isGroupMember(groupId);
+          allow create: if isGroupMember(groupId);
+          allow update: if resource.data.authorId == request.auth.uid;
+          allow delete: if resource.data.authorId == request.auth.uid || isAdmin();
+        }
+      }
+    }
+
+    // Announcements collection
+    match /announcements/{announcementId} {
+      allow read: if isStoreMember(resource.data.storeId);
+      allow create: if isAdmin() || (isManager() && isStoreMember(request.resource.data.storeId));
+      allow update: if isAdmin() || (isManager() && isStoreMember(resource.data.storeId));
+      allow delete: if isAdmin() || (isManager() && isStoreMember(resource.data.storeId));
+    }
+
+    // Time off requests
+    match /timeOffRequests/{requestId} {
+      allow read: if isStoreMember(resource.data.storeId);
+      allow create: if request.auth.uid == request.resource.data.userId;
+      allow update: if isAdmin() || (isManager() && isStoreMember(resource.data.storeId));
+      allow delete: if request.auth.uid == resource.data.userId || isAdmin();
+    }
+
+    // Audit logs
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+  }
+} 

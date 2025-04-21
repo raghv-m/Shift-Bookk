@@ -1,0 +1,134 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read access to public data without authentication
+    match /public/{document=**} {
+      allow read: if true;
+    }
+    
+    // Allow signup process - let a newly authenticated user create their own document
+    match /users/{userId} {
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Allow authenticated users to create their organization during signup
+    match /organizations/{orgId} {
+      allow create: if request.auth != null && request.auth.uid == orgId;
+      allow read: if request.auth != null && request.auth.uid == resource.data.ownerId;
+      allow update: if request.auth != null && request.auth.uid == resource.data.ownerId;
+    }
+    
+    // Allow authenticated users to read and write to collections
+    match /{collection}/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isManager() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager';
+    }
+    
+    function isEmployee() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'employee';
+    }
+    
+    function isStoreManager(storeId) {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/stores/$(storeId)) && 
+        get(/databases/$(database)/documents/stores/$(storeId)).data.managerIds.hasAny([request.auth.uid]);
+    }
+    
+    function isStoreEmployee(storeId) {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/stores/$(storeId)) && 
+        get(/databases/$(database)/documents/stores/$(storeId)).data.employeeIds.hasAny([request.auth.uid]);
+    }
+
+    // Users collection - more specific rules (will override the general rules above)
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        isAdmin() || 
+        isManager() && isStoreManager(resource.data.storeId)
+      );
+      // Admin can create users after their initial signup
+      allow create: if isAdmin() || (request.auth.uid == userId);
+      allow update: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        isAdmin() || 
+        isManager() && isStoreManager(resource.data.storeId)
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Stores collection
+    match /stores/{storeId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        isManager() && isStoreManager(storeId) ||
+        isEmployee() && isStoreEmployee(storeId)
+      );
+      allow write: if isAdmin() || isManager() && isStoreManager(storeId);
+    }
+
+    // Shifts collection
+    match /shifts/{shiftId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        isManager() && isStoreManager(resource.data.storeId) ||
+        isEmployee() && resource.data.userId == request.auth.uid
+      );
+      allow create: if isAdmin() || isManager() && isStoreManager(request.resource.data.storeId);
+      allow update: if isAuthenticated() && (
+        isAdmin() || 
+        isManager() && isStoreManager(resource.data.storeId) ||
+        isEmployee() && resource.data.userId == request.auth.uid
+      );
+      allow delete: if isAdmin() || isManager() && isStoreManager(resource.data.storeId);
+    }
+
+    // Time logs collection
+    match /time_logs/{logId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        isManager() && isStoreManager(resource.data.storeId) ||
+        isEmployee() && resource.data.userId == request.auth.uid
+      );
+      allow create: if isEmployee() && resource.data.userId == request.auth.uid;
+      allow update: if isEmployee() && resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin() || isManager() && isStoreManager(resource.data.storeId);
+    }
+
+    // Time off requests collection
+    match /time_off_requests/{requestId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        isManager() && isStoreManager(resource.data.storeId) ||
+        isEmployee() && resource.data.userId == request.auth.uid
+      );
+      allow create: if isEmployee() && resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        isAdmin() || 
+        isManager() && isStoreManager(resource.data.storeId) ||
+        isEmployee() && resource.data.userId == request.auth.uid
+      );
+      allow delete: if isAdmin() || isManager() && isStoreManager(resource.data.storeId);
+    }
+  }
+} 

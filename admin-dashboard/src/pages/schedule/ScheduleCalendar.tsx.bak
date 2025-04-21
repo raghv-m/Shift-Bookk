@@ -1,0 +1,280 @@
+import React, { useState, useEffect } from 'react';
+import { Box, Typography, Paper, Button, Dialog, DialogTitle, DialogContent, DialogActions, IconButton, Tooltip, CircularProgress, Grid } from '@mui/material';
+import { collection, getDocs, query, where, doc, addDoc, updateDoc, Timestamp, deleteDoc } from 'firebase/firestore';
+import { db } from '../../config/firebase';
+import { useAuth } from '../../context/AuthContext';
+import AddIcon from '@mui/icons-material/Add';
+import ShiftForm from '../../components/forms/ShiftForm';
+import { Shift } from '../../types';
+import { formatTimestamp, timestampToDate } from '../../utils/timeHelpers';
+import FullCalendar from '@fullcalendar/react';
+import dayGridPlugin from '@fullcalendar/daygrid';
+import timeGridPlugin from '@fullcalendar/timegrid';
+import interactionPlugin from '@fullcalendar/interaction';
+
+// Extended Shift interface from ShiftForm
+interface ExtendedShift extends Shift {
+  description?: string;
+  location?: string;
+}
+
+interface CalendarEvent {
+  id: string;
+  title: string;
+  start: Date;
+  end: Date;
+  allDay: boolean;
+  backgroundColor: string;
+  borderColor: string;
+  extendedProps: {
+    employeeId: string;
+    status: string;
+    description?: string;
+    location?: string;
+  };
+}
+
+const statusColors = {
+  pending: '#FFC107',
+  approved: '#4CAF50',
+  rejected: '#F44336',
+  completed: '#2196F3',
+  'in-progress': '#9C27B0',
+  cancelled: '#607D8B',
+  scheduled: '#FF9800'
+};
+
+const ScheduleCalendar: React.FC = () => {
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [openShiftDialog, setOpenShiftDialog] = useState(false);
+  const [selectedShift, setSelectedShift] = useState<Partial<ExtendedShift> | null>(null);
+  const [isNewShift, setIsNewShift] = useState(true);
+  const { currentUser } = useAuth();
+  
+  useEffect(() => {
+    if (!currentUser) return;
+    
+    const fetchEmployees = async () => {
+      try {
+        const employeesRef = collection(db, 'employees');
+        const employeeSnapshot = await getDocs(employeesRef);
+        const employeesList = employeeSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setEmployees(employeesList);
+      } catch (error) {
+        console.error('Error fetching employees:', error);
+      }
+    };
+    
+    const fetchShifts = async () => {
+      try {
+        const shiftsRef = collection(db, 'shifts');
+        const shiftsSnapshot = await getDocs(shiftsRef);
+        const shiftsData = shiftsSnapshot.docs.map(doc => {
+          const data = doc.data() as ExtendedShift;
+          
+          return {
+            id: doc.id,
+            title: data.title || 'Untitled Shift',
+            start: data.startTime ? data.startTime.toDate() : new Date(),
+            end: data.endTime ? data.endTime.toDate() : new Date(),
+            allDay: false,
+            backgroundColor: statusColors[data.status as keyof typeof statusColors] || '#757575',
+            borderColor: statusColors[data.status as keyof typeof statusColors] || '#757575',
+            extendedProps: {
+              employeeId: data.employeeId,
+              status: data.status,
+              description: data.description,
+              location: data.location
+            }
+          };
+        });
+        setEvents(shiftsData);
+      } catch (error) {
+        console.error('Error fetching shifts:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchEmployees();
+    fetchShifts();
+  }, [currentUser]);
+  
+  const handleOpenShiftDialog = (shift?: Partial<ExtendedShift>) => {
+    if (shift) {
+      setSelectedShift(shift);
+      setIsNewShift(false);
+    } else {
+      setSelectedShift(null);
+      setIsNewShift(true);
+    }
+    setOpenShiftDialog(true);
+  };
+  
+  const handleCloseShiftDialog = () => {
+    setOpenShiftDialog(false);
+    setSelectedShift(null);
+  };
+  
+  const handleSaveShift = async (formData: Partial<ExtendedShift>) => {
+    try {
+      if (isNewShift) {
+        const shiftData = {
+          ...formData,
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now()
+        };
+        
+        const docRef = await addDoc(collection(db, 'shifts'), shiftData);
+        
+        if (formData.startTime && formData.endTime) {
+          const newEvent: CalendarEvent = {
+            id: docRef.id,
+            title: formData.title || 'Untitled Shift',
+            start: formData.startTime.toDate(),
+            end: formData.endTime.toDate(),
+            allDay: false,
+            backgroundColor: statusColors[formData.status as keyof typeof statusColors] || '#757575',
+            borderColor: statusColors[formData.status as keyof typeof statusColors] || '#757575',
+            extendedProps: {
+              employeeId: formData.employeeId || '',
+              status: formData.status || 'pending',
+              description: formData.description,
+              location: formData.location
+            }
+          };
+          
+          setEvents([...events, newEvent]);
+        }
+      } else if (selectedShift?.id) {
+        await updateDoc(doc(db, 'shifts', selectedShift.id), {
+          ...formData,
+          updatedAt: Timestamp.now()
+        });
+        
+        const updatedEvents = events.map(event => {
+          if (event.id === selectedShift.id && formData.startTime && formData.endTime) {
+            return {
+              ...event,
+              title: formData.title || event.title,
+              start: formData.startTime.toDate(),
+              end: formData.endTime.toDate(),
+              backgroundColor: statusColors[formData.status as keyof typeof statusColors] || event.backgroundColor,
+              borderColor: statusColors[formData.status as keyof typeof statusColors] || event.borderColor,
+              extendedProps: {
+                ...event.extendedProps,
+                employeeId: formData.employeeId || event.extendedProps.employeeId,
+                status: formData.status || event.extendedProps.status,
+                description: formData.description,
+                location: formData.location
+              }
+            };
+          }
+          return event;
+        });
+        
+        setEvents(updatedEvents);
+      }
+      
+      handleCloseShiftDialog();
+    } catch (error) {
+      console.error('Error saving shift:', error);
+    }
+  };
+  
+  const handleDeleteShift = async () => {
+    if (selectedShift?.id) {
+      try {
+        await deleteDoc(doc(db, 'shifts', selectedShift.id));
+        setEvents(events.filter(event => event.id !== selectedShift.id));
+        handleCloseShiftDialog();
+      } catch (error) {
+        console.error('Error deleting shift:', error);
+      }
+    }
+  };
+  
+  const handleEventClick = (info: any) => {
+    const eventId = info.event.id;
+    const eventData = events.find(event => event.id === eventId);
+    
+    if (eventData) {
+      const shift: Partial<ExtendedShift> = {
+        id: eventData.id,
+        title: eventData.title,
+        startTime: Timestamp.fromDate(eventData.start),
+        endTime: Timestamp.fromDate(eventData.end),
+        employeeId: eventData.extendedProps.employeeId,
+        status: eventData.extendedProps.status as 'pending' | 'approved' | 'rejected' | 'completed' | 'in-progress' | 'cancelled' | 'scheduled',
+        description: eventData.extendedProps.description,
+        location: eventData.extendedProps.location
+      };
+      
+      handleOpenShiftDialog(shift);
+    }
+  };
+  
+  if (loading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+  
+  return (
+    <Box sx={{ width: '100%', p: 2 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h4">Schedule Calendar</Typography>
+        <Tooltip title="Add New Shift">
+          <IconButton color="primary" onClick={() => handleOpenShiftDialog()}>
+            <AddIcon />
+          </IconButton>
+        </Tooltip>
+      </Box>
+      
+      <Paper elevation={3} sx={{ height: 'calc(100vh - 200px)', p: 2, overflow: 'hidden' }}>
+        <FullCalendar
+          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+          initialView="timeGridWeek"
+          headerToolbar={{
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,timeGridWeek,timeGridDay'
+          }}
+          events={events}
+          eventClick={handleEventClick}
+          height="100%"
+          nowIndicator
+          allDaySlot={false}
+          slotDuration="00:30:00"
+          eventTimeFormat={{
+            hour: '2-digit',
+            minute: '2-digit',
+            meridiem: 'short'
+          }}
+        />
+      </Paper>
+      
+      <Dialog open={openShiftDialog} onClose={handleCloseShiftDialog} maxWidth="md" fullWidth>
+        <DialogTitle>{isNewShift ? 'Add New Shift' : 'Edit Shift'}</DialogTitle>
+        <DialogContent>
+          <ShiftForm 
+            initialData={selectedShift || undefined}
+            onSubmit={handleSaveShift}
+            onCancel={handleCloseShiftDialog}
+            isEditing={!isNewShift}
+            onDelete={handleDeleteShift}
+          />
+        </DialogContent>
+      </Dialog>
+    </Box>
+  );
+};
+
+export default ScheduleCalendar; 
